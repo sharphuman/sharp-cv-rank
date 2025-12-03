@@ -109,4 +109,83 @@ with st.container():
     c1, c2, c3 = st.columns(3)
     with c1:
         st.info("**🚀 Stop Ctrl+F**\n\nAI reads for *context*, not just keywords. It knows that 'React' implies 'JS' experience.")
-    with c2
+    with c2:
+        st.warning("**🚩 Catch Red Flags**\n\nInstantly spot job hoppers, employment gaps, and skills mismatches before you call.")
+    with c3:
+        st.success("**📝 Interview Prep**\n\nGet custom, hard-hitting technical questions generated for every candidate's weak spots.")
+
+st.divider()
+
+# --- MAIN APP ---
+with st.sidebar:
+    st.header("1. The Job")
+    jd_input_method = st.radio("Input Method", ["Paste Text", "Upload File"])
+    
+    jd_text = ""
+    if jd_input_method == "Paste Text":
+        jd_text = st.text_area("Paste JD Here", height=300)
+    else:
+        jd_file = st.file_uploader("Upload JD", type=["pdf", "docx", "txt"])
+        if jd_file:
+            jd_text = extract_text_from_file(jd_file)
+
+    st.divider()
+    st.header("2. Settings")
+    email_recipient = st.text_input("Email Report To", "judd@sharphuman.com")
+
+st.subheader("2. Upload Candidates")
+st.write("Drag and drop your stack of resumes here. We'll rank them instantly.")
+uploaded_cvs = st.file_uploader("Upload CVs (PDF/DOCX)", type=["pdf", "docx"], accept_multiple_files=True)
+
+if st.button("Analyze & Rank Candidates", type="primary"):
+    if not jd_text or not uploaded_cvs:
+        st.error("Please provide a Job Description and at least one CV.")
+    else:
+        results = []
+        progress_bar = st.progress(0)
+        status_text = st.empty()
+        
+        for i, cv_file in enumerate(uploaded_cvs):
+            status_text.text(f"Analyzing {cv_file.name}...")
+            cv_text = extract_text_from_file(cv_file)
+            analysis = analyze_candidate(cv_text, jd_text, cv_file.name)
+            
+            results.append({
+                "Score": analysis.get('score', 0),
+                "Name": cv_file.name,
+                "Summary": analysis.get('summary', ''),
+                "Strengths": analysis.get('pros', ''),
+                "Red Flags": analysis.get('cons', ''),
+                "Interview Q": analysis.get('interview_q', '')
+            })
+            progress_bar.progress((i + 1) / len(uploaded_cvs))
+            
+        status_text.text("Finalizing Report...")
+        
+        df = pd.DataFrame(results)
+        df = df.sort_values(by="Score", ascending=False)
+        
+        # Display Top Result
+        best = df.iloc[0]
+        st.success(f"🏆 Top Match: **{best['Name']}** ({best['Score']}%)")
+        
+        # Detailed Table
+        for index, row in df.iterrows():
+            with st.expander(f"{row['Score']}% - {row['Name']}"):
+                c1, c2 = st.columns(2)
+                with c1:
+                    st.write("**✅ Strengths:**")
+                    st.write(row['Strengths'])
+                    st.write("**💡 Interview Question:**")
+                    st.info(row['Interview Q'])
+                with c2:
+                    st.write("**🚩 Risks:**")
+                    st.warning(row['Red Flags'])
+                    st.write("**📝 Summary:**")
+                    st.caption(row['Summary'])
+        
+        if email_recipient:
+            if send_summary_email(email_recipient, df, "Job Analysis"):
+                st.toast(f"Report emailed to {email_recipient}", icon="📧")
+            else:
+                st.error("Could not send email.")
