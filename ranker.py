@@ -69,25 +69,24 @@ def analyze_candidate(candidate_text, jd_text, filename):
     {candidate_text[:3000]}
     
     TASK:
-    1. Score (0-100): Strict match.
-    2. Summary: 2 sentences.
-    3. Red Flags: Gaps, hopping, missing skills.
+    1. EXTRACT CONTACT INFO: Find Email, Phone, LinkedIn URL, and Location (City/State).
+    2. SCORE (0-100): Strict match.
+    3. SUMMARY: 2 sentences.
+    4. RED FLAGS: Gaps, hopping, missing skills.
     
-    4. KNOWLEDGE CHECK (The "Knock-out" Test):
-       - Identify the TOP 3 HARD SKILLS listed (e.g. Active Directory, Python, AWS).
-       - Create 3 "Trivia" questions to test basic competence. (e.g. "What are the 5 FSMO roles?").
-       - Provide the CORRECT ANSWER for the recruiter.
+    5. KNOWLEDGE CHECK (The "Knock-out" Test):
+       - Identify TOP 3 HARD SKILLS.
+       - Create 3 "Trivia" questions to test competence.
+       - Provide the CORRECT ANSWER.
     
-    5. BEHAVIORAL DEEP DIVE (The "Open" Questions):
-       - Q1: "Describe a time you had to DEPLOY or DESIGN something complex..." (Contextualize this to a project in their CV).
-       - Q2: "Describe a time you had to SOLVE a very complex problem..." (Contextualize this to a specific role/tech in their CV).
+    6. BEHAVIORAL DEEP DIVE:
+       - Q1: "Describe a time you had to DEPLOY or DESIGN..." (Contextualize).
+       - Q2: "Describe a time you had to SOLVE a complex problem..." (Contextualize).
     
-    6. EXTRAS:
-       - Manager Blurb (for Slack).
-       - Outreach Email (Personalized).
-       - Blind Profile (No Name/Gender).
+    7. EXTRAS: Manager Blurb, Outreach Email, Blind Profile.
     
     OUTPUT JSON KEYS: 
+    "email", "phone", "linkedin", "location",
     "score", "summary", "pros", "cons", 
     "tech_q1", "tech_a1", "tech_q2", "tech_a2", "tech_q3", "tech_a3", 
     "beh_q1", "beh_q2",
@@ -101,7 +100,7 @@ def analyze_candidate(candidate_text, jd_text, filename):
         )
         return json.loads(response.choices[0].message.content)
     except Exception as e:
-        return {"score": 0, "summary": "Error", "tech_q1": "", "tech_a1": "", "manager_blurb": "", "outreach_email": "", "blind_summary": ""}
+        return {"score": 0, "summary": "Error", "tech_q1": "", "tech_a1": "", "email": "", "phone": ""}
 
 # --- EMAIL REPORT ---
 def send_summary_email(user_email, df, jd_title):
@@ -110,7 +109,8 @@ def send_summary_email(user_email, df, jd_title):
     msg['From'] = GMAIL_USER
     msg['To'] = user_email
     
-    top_5 = df.head(5)[['Score', 'Name', 'Summary', 'Red Flags']].to_html(index=False)
+    # Include Contact Info in Email Report
+    top_5 = df.head(5)[['Score', 'Name', 'Email', 'Location', 'Summary']].to_html(index=False)
     
     body = f"""
     <h3>Candidate Ranking Report</h3>
@@ -145,11 +145,11 @@ with st.container():
     with c1:
         st.info("**🚀 Bulk Processing**\n\nZIP / PDF support.")
     with c2:
-        st.warning("**🧠 Knowledge Check**\n\nAuto-generated tech trivia + answers.")
+        st.warning("**🧠 Knowledge Check**\n\nAuto-generated tech trivia.")
     with c3:
-        st.success("**💬 Behavioral**\n\nCustomized 'Tell me about a time' prompts.")
+        st.success("**💬 Behavioral**\n\nCustomized prompts.")
     with c4:
-        st.error("**🙈 Blind Hiring**\n\nUnbiased profiles.")
+        st.error("**📞 Contact Extraction**\n\nAuto-finds Email/Phone.")
 
 st.divider()
 
@@ -197,6 +197,10 @@ if st.button("Rank Candidates", type="primary"):
             results.append({
                 "Score": a.get('score', 0),
                 "Name": doc['name'],
+                "Email": a.get('email', 'N/A'),
+                "Phone": a.get('phone', 'N/A'),
+                "Location": a.get('location', 'N/A'),
+                "LinkedIn": a.get('linkedin', ''),
                 "Summary": a.get('summary', ''),
                 "Strengths": a.get('pros', ''),
                 "Red Flags": a.get('cons', ''),
@@ -219,32 +223,39 @@ if st.button("Rank Candidates", type="primary"):
         st.success(f"🏆 Top Pick: **{best['Name']}** ({best['Score']}%)")
         
         for index, row in df.iterrows():
+            # EXPANDER HEADER: Show Name + Score
             with st.expander(f"{row['Score']}% - {row['Name']}"):
+                
+                # CONTACT INFO ROW
+                st.markdown(f"**📍 {row['Location']}** | 📧 {row['Email']} | 📞 {row['Phone']} | 🔗 {row['LinkedIn']}")
+                st.divider()
+
+                # STRENGTHS & RED FLAGS
                 c1, c2 = st.columns([1, 1])
                 with c1:
-                    st.write("**✅ Strengths**")
-                    st.write(row['Strengths'])
+                    # GREEN BACKGROUND FOR STRENGTHS
+                    st.success(f"**✅ Strengths:**\n\n{row['Strengths']}")
                 with c2:
-                    st.write("**🚩 Red Flags**")
-                    st.error(row['Red Flags'])
+                    # RED BACKGROUND FOR RED FLAGS
+                    st.error(f"**🚩 Risks:**\n\n{row['Red Flags']}")
                 
                 st.divider()
                 
-                # RECRUITER TOOLS
+                # TABS
                 tab1, tab2, tab3, tab4, tab5 = st.tabs(["🧠 Knowledge Check", "🗣️ Behavioral", "💬 Slack", "📧 Outreach", "🙈 Blind Profile"])
                 
                 with tab1:
                     st.caption("Ask these to test basic technical competence:")
-                    col_q, col_a = st.columns([2, 1])
                     
-                    with col_q:
-                        st.markdown(f"**Q1:** {row['TQ1']}")
-                        st.markdown(f"**Q2:** {row['TQ2']}")
-                        st.markdown(f"**Q3:** {row['TQ3']}")
-                    with col_a:
-                        st.info(f"**Answer:** {row['TA1']}")
-                        st.info(f"**Answer:** {row['TA2']}")
-                        st.info(f"**Answer:** {row['TA3']}")
+                    # Q/A STACKED VERTICALLY
+                    st.markdown(f"**Q1:** {row['TQ1']}")
+                    st.info(f"**Answer:** {row['TA1']}")
+                    
+                    st.markdown(f"**Q2:** {row['TQ2']}")
+                    st.info(f"**Answer:** {row['TA2']}")
+                    
+                    st.markdown(f"**Q3:** {row['TQ3']}")
+                    st.info(f"**Answer:** {row['TA3']}")
 
                 with tab2:
                     st.caption("Ask these to test experience depth:")
