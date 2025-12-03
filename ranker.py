@@ -10,7 +10,6 @@ from email.mime.application import MIMEApplication
 import io
 import json
 import zipfile
-import os
 
 # --- CONFIGURATION ---
 OPENAI_API_KEY = st.secrets["OPENAI_API_KEY"]
@@ -20,71 +19,48 @@ GMAIL_APP_PASSWORD = st.secrets["GMAIL_APP_PASSWORD"]
 client = OpenAI(api_key=OPENAI_API_KEY)
 
 # --- HELPER: FILE PROCESSING ---
-
 def read_file_content(file_obj, filename):
-    """
-    Reads text from a file-like object based on extension.
-    """
     text = ""
     filename = filename.lower()
-    
     try:
         if filename.endswith(".pdf"):
             with pdfplumber.open(file_obj) as pdf:
                 for page in pdf.pages:
                     t = page.extract_text()
                     if t: text += t + "\n"
-                    
         elif filename.endswith(".docx"):
             doc = docx.Document(file_obj)
             for para in doc.paragraphs:
                 text += para.text + "\n"
-                
         elif filename.endswith(".txt"):
             text = str(file_obj.read(), "utf-8", errors='ignore')
-            
     except Exception as e:
         return f"Error reading {filename}: {e}"
-        
-    return text[:4000] # Limit tokens
+    return text[:4000]
 
 def process_uploaded_files(uploaded_files):
-    """
-    Handles individual files AND unzips .zip archives in memory.
-    Returns a list of dictionaries: [{'name': 'john.pdf', 'text': '...'}, ...]
-    """
     processed_docs = []
-    
     for uploaded_file in uploaded_files:
-        # 1. Handle ZIP Files
         if uploaded_file.name.lower().endswith(".zip"):
             try:
                 with zipfile.ZipFile(uploaded_file) as z:
                     for filename in z.namelist():
-                        # Skip Mac OS hidden files and directories
                         if "__MACOSX" in filename or filename.endswith("/"): continue
-                        
-                        # Only process supported extensions inside the zip
                         if filename.lower().endswith(('.pdf', '.docx', '.txt')):
                             with z.open(filename) as f:
-                                # We need to copy bytes to BytesIO so libraries can read it multiple times if needed
                                 file_content = io.BytesIO(f.read())
                                 text = read_file_content(file_content, filename)
                                 processed_docs.append({"name": filename, "text": text})
-            except Exception as e:
-                st.error(f"Error unzipping {uploaded_file.name}: {e}")
-                
-        # 2. Handle Individual Files
+            except: pass
         else:
             text = read_file_content(uploaded_file, uploaded_file.name)
             processed_docs.append({"name": uploaded_file.name, "text": text})
-            
     return processed_docs
 
 # --- AI ANALYSIS ---
 def analyze_candidate(candidate_text, jd_text, filename):
     prompt = f"""
-    You are a Forensic Technical Recruiter. Analyze this candidate.
+    You are a Senior Technical Recruiter. Evaluate this candidate.
     
     JOB DESCRIPTION:
     {jd_text[:2000]}
@@ -93,27 +69,28 @@ def analyze_candidate(candidate_text, jd_text, filename):
     {candidate_text[:3000]}
     
     TASK:
-    1. Score (0-100): Strict match against JD.
+    1. Score (0-100): Strict match.
     2. Summary: 2 sentences.
-    3. Red Flags: Gaps, hopping, or missing required skills.
+    3. Red Flags: Gaps, hopping, missing skills.
     
-    4. INTERROGATION KIT (The "Truth Test"):
-       - Find 3 SPECIFIC claims in the CV (e.g. "Managed $5M budget", "Used AWS Lambda", "Tenure 2018-2022").
-       - Turn them into Closed Questions to verify the fact.
-       - Q1/A1: "What was the specific budget?" -> Ans: "$5M" (From CV).
-       - Q2/A2: "Which specific AWS service did you use for X?" -> Ans: "Lambda" (From CV).
-       - Q3/A3: "Verify exact dates at [Company]." -> Ans: "2018-2022" (From CV).
-       *IMPORTANT: The 'Answer' MUST be explicitly found in the text.*
+    4. KNOWLEDGE CHECK (The "Knock-out" Test):
+       - Identify the TOP 3 HARD SKILLS listed (e.g. Active Directory, Python, AWS).
+       - Create 3 "Trivia" questions to test basic competence. (e.g. "What are the 5 FSMO roles?").
+       - Provide the CORRECT ANSWER for the recruiter.
     
-    5. Behavioral Q (Open): One question to probe a weakness or gap.
+    5. BEHAVIORAL DEEP DIVE (The "Open" Questions):
+       - Q1: "Describe a time you had to DEPLOY or DESIGN something complex..." (Contextualize this to a project in their CV).
+       - Q2: "Describe a time you had to SOLVE a very complex problem..." (Contextualize this to a specific role/tech in their CV).
     
-    6. MANAGER BLURB: 1-sentence sales pitch for Slack.
-    7. OUTREACH EMAIL: Personalized email referencing a specific detail.
-    8. BLIND PROFILE: Summary with NO Name/Gender/School.
+    6. EXTRAS:
+       - Manager Blurb (for Slack).
+       - Outreach Email (Personalized).
+       - Blind Profile (No Name/Gender).
     
     OUTPUT JSON KEYS: 
     "score", "summary", "pros", "cons", 
-    "q1", "a1", "q2", "a2", "q3", "a3", "open_q", 
+    "tech_q1", "tech_a1", "tech_q2", "tech_a2", "tech_q3", "tech_a3", 
+    "beh_q1", "beh_q2",
     "manager_blurb", "outreach_email", "blind_summary"
     """
     try:
@@ -124,7 +101,7 @@ def analyze_candidate(candidate_text, jd_text, filename):
         )
         return json.loads(response.choices[0].message.content)
     except Exception as e:
-        return {"score": 0, "summary": "Error", "q1": "", "a1": "", "manager_blurb": "", "outreach_email": "", "blind_summary": ""}
+        return {"score": 0, "summary": "Error", "tech_q1": "", "tech_a1": "", "manager_blurb": "", "outreach_email": "", "blind_summary": ""}
 
 # --- EMAIL REPORT ---
 def send_summary_email(user_email, df, jd_title):
@@ -161,18 +138,18 @@ def send_summary_email(user_email, df, jd_title):
 st.set_page_config(page_title="Sharp CV Rank", page_icon="⚖️", layout="wide")
 
 st.title("⚖️ Sharp CV Rank")
-st.markdown("### High-Volume Application Screener")
+st.markdown("### The Technical Screen Helper")
 
 with st.container():
     c1, c2, c3, c4 = st.columns(4)
     with c1:
-        st.info("**🚀 Bulk Processing**\n\nUpload ZIP files or 50+ PDFs at once.")
+        st.info("**🚀 Bulk Processing**\n\nZIP / PDF support.")
     with c2:
-        st.warning("**🕵️ Fact Checker**\n\nAuto-generates verification questions based on CV claims.")
+        st.warning("**🧠 Knowledge Check**\n\nAuto-generated tech trivia + answers.")
     with c3:
-        st.success("**👻 Outreach**\n\nInstant personalized emails.")
+        st.success("**💬 Behavioral**\n\nCustomized 'Tell me about a time' prompts.")
     with c4:
-        st.error("**🙈 Blind Hiring**\n\nUnbiased profiles in one click.")
+        st.error("**🙈 Blind Hiring**\n\nUnbiased profiles.")
 
 st.divider()
 
@@ -203,7 +180,6 @@ if st.button("Rank Candidates", type="primary"):
     if not jd_text or not uploaded_files:
         st.error("Missing Data")
     else:
-        # 1. Pre-process (Unzip if needed)
         with st.spinner("Unpacking files..."):
             docs = process_uploaded_files(uploaded_files)
         
@@ -213,9 +189,8 @@ if st.button("Rank Candidates", type="primary"):
         progress_bar = st.progress(0)
         status_text = st.empty()
         
-        # 2. Analysis Loop
         for i, doc in enumerate(docs):
-            status_text.text(f"Forensic Analysis: {doc['name']}...")
+            status_text.text(f"Screening: {doc['name']}...")
             
             a = analyze_candidate(doc['text'], jd_text, doc['name'])
             
@@ -228,14 +203,14 @@ if st.button("Rank Candidates", type="primary"):
                 "Manager Blurb": a.get('manager_blurb', ''),
                 "Outreach Email": a.get('outreach_email', ''),
                 "Blind Summary": a.get('blind_summary', ''),
-                "Q1": a.get('q1', ''), "A1": a.get('a1', ''),
-                "Q2": a.get('q2', ''), "A2": a.get('a2', ''),
-                "Q3": a.get('q3', ''), "A3": a.get('a3', ''),
-                "Open Q": a.get('open_q', '')
+                "TQ1": a.get('tech_q1', ''), "TA1": a.get('tech_a1', ''),
+                "TQ2": a.get('tech_q2', ''), "TA2": a.get('tech_a2', ''),
+                "TQ3": a.get('tech_q3', ''), "TA3": a.get('tech_a3', ''),
+                "BQ1": a.get('beh_q1', ''), "BQ2": a.get('beh_q2', '')
             })
             progress_bar.progress((i + 1) / len(docs))
             
-        status_text.text("Finalizing Report...")
+        status_text.text("Finalizing...")
         
         df = pd.DataFrame(results).sort_values(by="Score", ascending=False)
         
@@ -255,23 +230,32 @@ if st.button("Rank Candidates", type="primary"):
                 
                 st.divider()
                 
-                tab1, tab2, tab3, tab4 = st.tabs(["🕵️ Truth Test", "💬 Slack Blurb", "📧 Outreach", "🙈 Blind Profile"])
+                # RECRUITER TOOLS
+                tab1, tab2, tab3, tab4, tab5 = st.tabs(["🧠 Knowledge Check", "🗣️ Behavioral", "💬 Slack", "📧 Outreach", "🙈 Blind Profile"])
                 
                 with tab1:
-                    st.caption("Ask these to verify claims found in the resume:")
-                    st.markdown(f"**1. Verify:** {row['Q1']}")
-                    st.info(f"Resume says: {row['A1']}")
-                    st.markdown(f"**2. Verify:** {row['Q2']}")
-                    st.info(f"Resume says: {row['A2']}")
-                    st.markdown(f"**3. Verify:** {row['Q3']}")
-                    st.info(f"Resume says: {row['A3']}")
-                    st.markdown(f"**4. Deep Dive:** {row['Open Q']}")
-                
+                    st.caption("Ask these to test basic technical competence:")
+                    col_q, col_a = st.columns([2, 1])
+                    
+                    with col_q:
+                        st.markdown(f"**Q1:** {row['TQ1']}")
+                        st.markdown(f"**Q2:** {row['TQ2']}")
+                        st.markdown(f"**Q3:** {row['TQ3']}")
+                    with col_a:
+                        st.info(f"**Answer:** {row['TA1']}")
+                        st.info(f"**Answer:** {row['TA2']}")
+                        st.info(f"**Answer:** {row['TA3']}")
+
                 with tab2:
-                    st.code(row['Manager Blurb'], language="text")
+                    st.caption("Ask these to test experience depth:")
+                    st.markdown(f"**1. Deployment/Design:**\n> {row['BQ1']}")
+                    st.markdown(f"**2. Complex Problem:**\n> {row['BQ2']}")
+                
                 with tab3:
-                    st.text_area("Draft Email:", value=row['Outreach Email'], height=150)
+                    st.code(row['Manager Blurb'], language="text")
                 with tab4:
+                    st.text_area("Draft Email:", value=row['Outreach Email'], height=150)
+                with tab5:
                     st.text_area("Blind Summary:", value=row['Blind Summary'], height=150)
 
         if email_recipient:
